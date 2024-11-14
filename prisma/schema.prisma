@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model jadwal {
+  id_jadwal      Int       @id @default(autoincrement()) @db.UnsignedInt
+  id_pesanan     Int       @db.UnsignedInt
+  jumlah_pesanan Int       @db.UnsignedInt
+  is_overtime    Boolean   @default(false)
+  starting_at    DateTime  @db.Date
+  created_at     DateTime? @default(now()) @db.Timestamp(0)
+  pesanan        pesanan   @relation(fields: [id_pesanan], references: [id_pesanan], onDelete: Cascade, onUpdate: NoAction, map: "fk_pesanan")
+
+  @@index([id_pesanan], map: "fk_pesanan")
+}
+
+model jenis_layanan {
+  id_layanan     Int       @id @default(autoincrement()) @db.UnsignedInt
+  tipe_layanan   String    @db.VarChar(255)
+  nama_layanan   String    @db.VarChar(100)
+  estimasi_waktu Int       @db.UnsignedInt
+  harga          Int       @db.UnsignedInt
+  pesanan        pesanan[]
+}
+
+model pesanan {
+  id_pesanan     Int                     @id @default(autoincrement()) @db.UnsignedInt
+  nama_pelanggan String                  @db.VarChar(100)
+  no_hp          String                  @db.VarChar(15)
+  id_layanan     Int                     @db.UnsignedInt
+  keterangan     String?                 @db.Text
+  jumlah_pesanan Int                     @db.UnsignedInt
+  tanggal_masuk  DateTime?               @db.Date
+  status_pesanan pesanan_status_pesanan? @default(pending)
+  created_at     DateTime?               @default(now()) @db.Timestamp(0)
+  updated_at     DateTime?               @default(now()) @db.Timestamp(0)
+  jadwal         jadwal[]
+  jenis_layanan  jenis_layanan           @relation(fields: [id_layanan], references: [id_layanan], onDelete: Cascade, onUpdate: NoAction, map: "fk_layanan")
+
+  @@index([id_layanan], map: "fk_layanan")
+}
+
+model variabel {
+  id_variabel    Int    @id @default(autoincrement()) @db.UnsignedInt
+  nama_variabel  String @unique(map: "nama_variabel") @db.VarChar(50)
+  nilai_variabel Int    @db.UnsignedInt
+}
+
+enum pesanan_status_pesanan {
+  pending
+  in_progress
+  completed
+  canceled
+}
