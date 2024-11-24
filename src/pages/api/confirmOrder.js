@@ -1,20 +1,26 @@
-// pages/api/confirmOrder.js
-import { handleConfirmOrder } from "../../lib/handleConfirmOrder";
-import prisma from "../../lib/prisma";
+import { handleConfirmOrder } from "@/lib/handleConfirmOrder";
 
 export default async function handler(req, res) {
   if (req.method === "POST") {
-    const { orderDetails, startDate } = req.body;
-
     try {
-      const result = await handleConfirmOrder(orderDetails, startDate);
+      const { orderDetails, startDate, capacityResult } = req.body;
+
+      if (!orderDetails || !startDate || !capacityResult) {
+        throw new Error("Missing required fields.");
+      }
+
+      const result = await handleConfirmOrder(
+        orderDetails,
+        startDate,
+        capacityResult
+      );
       return res.status(200).json(result);
     } catch (error) {
-      console.error("Error in order confirmation:", error);
+      console.error("Error in API Route:", error);
       return res.status(500).json({ error: error.message });
     }
   } else {
     res.setHeader("Allow", ["POST"]);
-    res.status(405).end("Method Not Allowed");
+    return res.status(405).end("Method Not Allowed");
   }
 }

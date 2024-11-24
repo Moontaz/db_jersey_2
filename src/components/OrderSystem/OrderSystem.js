@@ -79,11 +79,17 @@ const OrderSystem = () => {
 
   const handleConfirm = async () => {
     try {
-      // Call the confirm order API route
       const response = await fetch("/api/confirmOrder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderDetails, startDate }),
+        body: JSON.stringify({
+          orderDetails,
+          startDate,
+          capacityResult: {
+            lastDate,
+            is_overtime: capacityStatus === "negotiate" ? true : false,
+          },
+        }),
       });
 
       const result = await response.json();

@@ -15,83 +15,87 @@ export const checkCapacity = async (orderDetails, variabelData) => {
     if (isNaN(initialDate.getTime())) throw new Error("Invalid initial date.");
 
     let currentDate = initialDate;
-    let remainingQuantity = quantity;
-    let lastDate = null;
     const isExpress = orderDetails.serviceName.toLowerCase() === "express";
+
+    // Function to skip Sundays (holidays)
+    const skipSundays = (date) => {
+      while (date.getDay() === 0) {
+        date.setDate(date.getDate() + 1);
+      }
+      return date;
+    };
+
+    // Ensure initial date is not a Sunday
+    currentDate = skipSundays(currentDate);
 
     if (isExpress) {
       // Handle Express Order
       const currentDateStr = currentDate.toISOString().split("T")[0];
+
+      // Get existing schedules for the current date
       const existingSchedules = await prisma.jadwal.findMany({
         where: { starting_at: currentDate },
       });
-      const totalOrdersForDay = existingSchedules.reduce(
-        (total, schedule) => total + schedule.jumlah_pesanan,
-        0
-      );
-      const availableCapacity = kapasitasNormalPerHari - totalOrdersForDay;
 
-      if (availableCapacity >= remainingQuantity) {
-        // Enough capacity in regular hours for Express order
+      // Step 1: Check normal capacity
+      const totalOrdersForDayNormal = existingSchedules
+        .filter((schedule) => !schedule.is_overtime)
+        .reduce((total, schedule) => total + schedule.jumlah_pesanan, 0);
+      const availableCapacityNormal =
+        kapasitasNormalPerHari - totalOrdersForDayNormal;
+
+      if (availableCapacityNormal >= quantity) {
+        // Accept jika kapasitas normal cukup
         return {
           status: "accept",
-          message: `Can fulfill on ${currentDateStr} without overtime.`,
+          message: `Order can be fulfilled on ${currentDateStr} using normal capacity.`,
           startDate: currentDateStr,
           lastDate: currentDateStr,
           is_overtime: false,
         };
       }
 
-      // Check weekly and daily overtime capacity for Express order
-      const startOfWeek = new Date(currentDate);
-      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-      const endOfWeek = new Date(startOfWeek);
-      endOfWeek.setDate(endOfWeek.getDate() + 6);
+      // Step 2: Allocate to overtime if normal capacity is full
+      let remainingQuantity = quantity - availableCapacityNormal;
 
-      const weeklyOvertimeSchedules = await prisma.jadwal.findMany({
-        where: {
-          starting_at: { gte: startOfWeek, lte: endOfWeek },
+      const totalOvertimeCapacity = kapasitasLemburPerJam * maksLemburPerHari;
+      const totalOrdersForDayOvertime = existingSchedules
+        .filter((schedule) => schedule.is_overtime)
+        .reduce((total, schedule) => total + schedule.jumlah_pesanan, 0);
+      const availableOvertimeCapacity =
+        totalOvertimeCapacity - totalOrdersForDayOvertime;
+
+      if (availableOvertimeCapacity >= remainingQuantity) {
+        // Accept jika lembur cukup untuk memenuhi sisa pesanan
+        return {
+          status: "accept",
+          message: `Order can be fulfilled on ${currentDateStr} using overtime.`,
+          startDate: currentDateStr,
+          lastDate: currentDateStr,
           is_overtime: true,
-        },
-      });
-      const totalOvertimeHoursThisWeek = weeklyOvertimeSchedules.reduce(
-        (total, schedule) =>
-          total + schedule.jumlah_pesanan / kapasitasLemburPerJam,
-        0
-      );
-
-      if (totalOvertimeHoursThisWeek >= maksLemburPerMinggu) {
-        return {
-          status: "reject",
-          message: "Weekly overtime limit reached. Cannot fulfill as Express.",
         };
       }
 
-      const dailyOvertimeCapacity = kapasitasLemburPerJam * maksLemburPerHari;
-      if (remainingQuantity > dailyOvertimeCapacity) {
-        return {
-          status: "reject",
-          message: `Daily overtime capacity of ${dailyOvertimeCapacity} items exceeded.`,
-        };
-      }
-
-      // Accept with overtime if within daily and weekly overtime limits
+      // Reject jika kapasitas (normal + lembur) tidak cukup
       return {
-        status: "accept",
-        message: `Express can fulfill on ${currentDateStr} with overtime.`,
-        startDate: currentDateStr,
-        lastDate: currentDateStr,
-        is_overtime: true,
+        status: "reject",
+        message: `Order exceeds total available capacity (normal + overtime) on ${currentDateStr}.`,
+        startDate: null,
+        lastDate: null,
       };
     } else {
-      // Handle Regular Order
-      let additionalDaysNeeded = 0;
-      let canFulfillAcrossDays = false;
+      // Handle Regular Order (logika tetap sama)
+      let daysChecked = 0;
+      let lastAvailableDate = null;
+      let remainingQuantity = quantity;
 
-      while (remainingQuantity > 0 && additionalDaysNeeded <= 2) {
+      while (remainingQuantity > 0 && daysChecked < 5) {
+        currentDate = skipSundays(currentDate);
         const currentDateStr = currentDate.toISOString().split("T")[0];
+
+        // Cek kapasitas reguler pada hari ini
         const existingSchedules = await prisma.jadwal.findMany({
-          where: { starting_at: currentDate },
+          where: { starting_at: currentDate, is_overtime: false },
         });
         const totalOrdersForDay = existingSchedules.reduce(
           (total, schedule) => total + schedule.jumlah_pesanan,
@@ -99,57 +103,57 @@ export const checkCapacity = async (orderDetails, variabelData) => {
         );
         const availableCapacity = kapasitasNormalPerHari - totalOrdersForDay;
 
-        if (availableCapacity >= remainingQuantity) {
-          // Accept if there's enough capacity for the entire order on the requested day
-          return {
-            status: "accept",
-            message: `Order can be fulfilled on ${currentDateStr}.`,
-            startDate: orderDetails.date,
-            lastDate: currentDateStr,
-            is_overtime: false,
-          };
-        } else if (availableCapacity > 0) {
-          // Negotiate if the requested day can only partially fulfill the order
-          return {
-            status: "negotiate",
-            message: `Only ${availableCapacity} items can be fulfilled on ${currentDateStr}. Remaining quantity will require additional days.`,
-            startDate: orderDetails.date,
-            lastDate: currentDateStr,
-            is_overtime: false,
-          };
+        if (availableCapacity > 0) {
+          if (availableCapacity >= remainingQuantity) {
+            return {
+              status: "accept",
+              message: `Order can be fulfilled on ${currentDateStr}.`,
+              startDate: orderDetails.date,
+              lastDate: currentDateStr,
+              is_overtime: false,
+            };
+          } else {
+            remainingQuantity -= availableCapacity;
+          }
         }
 
-        // Check if we can fulfill the order by spreading it across multiple days
-        if (availableCapacity === 0 && additionalDaysNeeded === 0) {
-          // First day has no capacity; suggest negotiating with a new start date
-          canFulfillAcrossDays = true;
-        }
+        lastAvailableDate = currentDateStr;
+        daysChecked++;
 
-        if (remainingQuantity <= 0) break;
-
-        // Move to the next day
-        additionalDaysNeeded += 1;
         currentDate.setDate(currentDate.getDate() + 1);
       }
 
-      // Final decision for regular orders after checking multiple days
-      if (remainingQuantity > 0 && canFulfillAcrossDays) {
-        return {
-          status: "negotiate",
-          message: `Full capacity not available on the requested date. Can fulfill starting from ${
-            initialDate.toISOString().split("T")[0]
-          } and across multiple days if needed.`,
-          startDate: initialDate.toISOString().split("T")[0],
-          lastDate: currentDate.toISOString().split("T")[0],
-          is_overtime: false,
-        };
+      if (remainingQuantity > 0) {
+        const remainingPercentage = (remainingQuantity / quantity) * 100;
+
+        if (remainingPercentage <= 50) {
+          return {
+            status: "negotiate",
+            message: `Order requires extending to a sixth day with ${remainingQuantity} items remaining (${remainingPercentage.toFixed(
+              2
+            )}% of total order).`,
+            startDate: initialDate.toISOString().split("T")[0],
+            lastDate: currentDate.toISOString().split("T")[0],
+            is_overtime: false,
+          };
+        } else {
+          return {
+            status: "reject",
+            message: `Order exceeds capacity and requires ${remainingQuantity} items to be fulfilled on a sixth day (${remainingPercentage.toFixed(
+              2
+            )}% of total order).`,
+            startDate: null,
+            lastDate: null,
+          };
+        }
       }
 
       return {
-        status: "reject",
-        message: "Capacity is full over the next three days. Order rejected.",
-        startDate: null,
-        lastDate: null,
+        status: "accept",
+        message: `Order can be fulfilled within ${daysChecked} days.`,
+        startDate: initialDate.toISOString().split("T")[0],
+        lastDate: lastAvailableDate,
+        is_overtime: false,
       };
     }
   } catch (error) {
