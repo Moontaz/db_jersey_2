@@ -78,6 +78,12 @@ const OrderSystem = () => {
   };
 
   const handleConfirm = async () => {
+    // Validasi nama pelanggan dan nomor HP sebelum mengirim ke database
+    if (!orderDetails.customerName || !orderDetails.phoneNumber) {
+      setErrorMessage("name and phone number must be filled.");
+      return;
+    }
+
     try {
       const response = await fetch("/api/confirmOrder", {
         method: "POST",
